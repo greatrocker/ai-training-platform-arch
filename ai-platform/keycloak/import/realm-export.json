@@ -1,0 +1,106 @@
+{
+  "realm": "ai-platform",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "accessTokenLifespan": 900,
+  "ssoSessionIdleTimeout": 86400,
+  "roles": {
+    "realm": [
+      { "name": "admin", "description": "Full access, matches ai_rbac seed role" },
+      { "name": "operator", "description": "Can execute day-to-day operations" },
+      { "name": "viewer", "description": "Read-only access" }
+    ]
+  },
+  "groups": [
+    { "name": "line-a", "path": "/line-a" }
+  ],
+  "users": [
+    {
+      "username": "admin1",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Admin",
+      "lastName": "User",
+      "email": "admin1@ai-platform.local",
+      "attributes": {
+        "dept": ["HQ"]
+      },
+      "credentials": [
+        { "type": "password", "value": "1qaz2WSX", "temporary": false }
+      ],
+      "realmRoles": ["admin"],
+      "groups": ["/line-a"]
+    },
+    {
+      "username": "operator1",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Operator",
+      "lastName": "User",
+      "email": "operator1@ai-platform.local",
+      "attributes": {
+        "dept": ["LineA"]
+      },
+      "credentials": [
+        { "type": "password", "value": "1qaz2WSX", "temporary": false }
+      ],
+      "realmRoles": ["operator"],
+      "groups": ["/line-a"]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "ai-training-frontend",
+      "name": "AI Training Platform Frontend (BFF)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "ChangeMe_FromVault",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://localhost/api/auth/callback"
+      ],
+      "webOrigins": [
+        "http://localhost"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost"
+      },
+      "protocolMappers": [
+        {
+          "name": "dept",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "userinfo.token.claim": "true",
+            "user.attribute": "dept",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "dept",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "groups",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ]
+}

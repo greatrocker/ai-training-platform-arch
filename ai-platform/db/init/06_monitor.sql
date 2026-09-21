@@ -1,0 +1,12 @@
+USE ai_monitor;
+GO
+
+CREATE TABLE alarm_event (
+  alarm_id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+  device_id UNIQUEIDENTIFIER,
+  flow_id UNIQUEIDENTIFIER,
+  snapshot_path NVARCHAR(500),
+  triggered_at DATETIME2 DEFAULT SYSUTCDATETIME(),
+  acknowledged BIT DEFAULT 0
+);
+GO

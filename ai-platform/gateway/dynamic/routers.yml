@@ -1,0 +1,87 @@
+http:
+  routers:
+    auth:
+      rule: "PathPrefix(`/api/auth`)"
+      service: auth
+      priority: 10
+    verify:
+      rule: "PathPrefix(`/verify`)"
+      service: auth
+      priority: 10
+    rbac:
+      rule: "PathPrefix(`/api/rbac`)"
+      service: rbac
+      middlewares: [jwt-auth]
+      priority: 10
+    dataset:
+      rule: "PathPrefix(`/api/dataset`)"
+      service: dataset
+      middlewares: [jwt-auth]
+      priority: 10
+    annotation:
+      rule: "PathPrefix(`/api/annotation`)"
+      service: annotation
+      middlewares: [jwt-auth]
+      priority: 10
+    training:
+      rule: "PathPrefix(`/api/training`)"
+      service: training
+      middlewares: [jwt-auth]
+      priority: 10
+    pipeline:
+      rule: "PathPrefix(`/api/pipeline`)"
+      service: pipeline
+      middlewares: [jwt-auth]
+      priority: 10
+    monitor:
+      rule: "PathPrefix(`/api/monitor`)"
+      service: monitor
+      middlewares: [jwt-auth]
+      priority: 10
+    dashboard-api:
+      rule: "PathPrefix(`/api/dashboard`)"
+      service: dashboard
+      middlewares: [jwt-auth]
+      priority: 10
+    frontend:
+      rule: "PathPrefix(`/`)"
+      service: frontend
+      priority: 1
+
+  services:
+    auth:
+      loadBalancer:
+        servers:
+          - url: "http://auth-service:8000"
+    rbac:
+      loadBalancer:
+        servers:
+          - url: "http://rbac-service:8000"
+    dataset:
+      loadBalancer:
+        servers:
+          - url: "http://dataset-service:8000"
+    annotation:
+      loadBalancer:
+        servers:
+          - url: "http://annotation-service:8000"
+    training:
+      loadBalancer:
+        servers:
+          - url: "http://training-service:8000"
+    pipeline:
+      loadBalancer:
+        servers:
+          - url: "http://pipeline-service:8000"
+    monitor:
+      loadBalancer:
+        servers:
+          - url: "http://monitor-service:8000"
+    dashboard:
+      loadBalancer:
+        servers:
+          - url: "http://dashboard-service:8000"
+    frontend:
+      loadBalancer:
+        servers:
+          - url: "http://frontend:5173"

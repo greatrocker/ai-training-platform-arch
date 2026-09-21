@@ -1,0 +1,8 @@
+.env
+data/dataset-import/*
+!data/dataset-import/.gitkeep
+__pycache__/
+*.pyc
+node_modules/
+frontend/dist/
+.vscode/

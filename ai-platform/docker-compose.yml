@@ -1,0 +1,276 @@
+networks:
+  ai-platform-net:
+    driver: bridge
+
+volumes:
+  mssql-data:
+  minio-data:
+  redis-data:
+  keycloak-data:
+
+services:
+  # ---------------- Gateway ----------------
+  gateway:
+    image: traefik:v3.0
+    command:
+      - --configFile=/etc/traefik/traefik.yml
+    ports:
+      - "80:80"
+      - "8090:8090" # traefik dashboard
+    volumes:
+      - ./gateway/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./gateway/dynamic:/etc/traefik/dynamic:ro
+    networks: [ai-platform-net]
+    depends_on:
+      auth-service:
+        condition: service_healthy
+
+  # ---------------- Identity ----------------
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    command: start-dev --import-realm
+    environment:
+      - KEYCLOAK_ADMIN=${KEYCLOAK_ADMIN}
+      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD}
+    ports:
+      - "8080:8080"
+    volumes:
+      - keycloak-data:/opt/keycloak/data
+      - ./keycloak/import:/opt/keycloak/data/import:ro
+    networks: [ai-platform-net]
+
+  # ---------------- Data infra ----------------
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      - ACCEPT_EULA=Y
+      - MSSQL_SA_PASSWORD=${MSSQL_SA_PASSWORD}
+    ports:
+      - "1433:1433"
+    volumes:
+      - mssql-data:/var/opt/mssql
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    networks: [ai-platform-net]
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  mssql-init:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    depends_on:
+      mssql:
+        condition: service_healthy
+    volumes:
+      - ./db/init:/init:ro
+    networks: [ai-platform-net]
+    entrypoint: >
+      bash -c "
+      for f in /init/*.sql; do
+        echo running $$f;
+        /opt/mssql-tools18/bin/sqlcmd -C -S mssql -U sa -P \"$$MSSQL_SA_PASSWORD\" -i \"$$f\" || exit 1;
+      done"
+    environment:
+      - MSSQL_SA_PASSWORD=${MSSQL_SA_PASSWORD}
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks: [ai-platform-net]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: quay.io/minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    networks: [ai-platform-net]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio-init:
+    image: quay.io/minio/mc
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks: [ai-platform-net]
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+      - MINIO_BUCKET_DATASET=${MINIO_BUCKET_DATASET}
+      - MINIO_BUCKET_MODELS=${MINIO_BUCKET_MODELS}
+      - MINIO_BUCKET_CCTV=${MINIO_BUCKET_CCTV}
+      - MINIO_BUCKET_ALARM=${MINIO_BUCKET_ALARM}
+      - MINIO_BUCKET_REPORTS=${MINIO_BUCKET_REPORTS}
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 $$MINIO_ROOT_USER $$MINIO_ROOT_PASSWORD;
+      mc mb -p local/$$MINIO_BUCKET_DATASET;
+      mc mb -p local/$$MINIO_BUCKET_MODELS;
+      mc mb -p local/$$MINIO_BUCKET_CCTV;
+      mc mb -p local/$$MINIO_BUCKET_ALARM;
+      mc mb -p local/$$MINIO_BUCKET_REPORTS;
+      exit 0"
+
+  # ---------------- Domain services ----------------
+  auth-service:
+    build: ./services/auth
+    env_file: .env
+    networks: [ai-platform-net]
+    depends_on: [keycloak]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  rbac-service:
+    build: ./services/rbac
+    env_file: .env
+    networks: [ai-platform-net]
+    depends_on:
+      mssql:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+
+  dataset-service:
+    build: ./services/dataset
+    env_file: .env
+    networks: [ai-platform-net]
+    # Whole drive mounted read-only so users can type any normal Windows
+    # path (e.g. D:\Videos\lineA) instead of a container-internal one —
+    # see WINDOWS_DRIVE_MOUNTS / windows_path.py. Add more `- X:\:/mnt/host/x:ro`
+    # lines here (and to dataset-worker, and WINDOWS_DRIVE_MOUNTS in .env)
+    # for additional drives.
+    volumes:
+      - ${HOST_WINDOWS_C}:/mnt/host/c:ro
+    depends_on:
+      mssql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+
+  dataset-worker:
+    build: ./services/dataset
+    env_file: .env
+    command: celery -A app.worker worker --loglevel=info
+    networks: [ai-platform-net]
+    volumes:
+      - ${HOST_WINDOWS_C}:/mnt/host/c:ro
+    depends_on:
+      mssql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+
+  annotation-service:
+    build: ./services/annotation
+    env_file: .env
+    networks: [ai-platform-net]
+    depends_on:
+      mssql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  annotation-worker:
+    build: ./services/annotation
+    env_file: .env
+    command: celery -A app.worker worker --loglevel=info
+    networks: [ai-platform-net]
+    depends_on:
+      mssql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  training-service:
+    build: ./services/training
+    env_file: .env
+    networks: [ai-platform-net]
+    depends_on:
+      mssql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  celery-worker:
+    build: ./services/training
+    env_file: .env
+    # --pool=solo: GPU training/inference must not run inside a forked
+    # (daemonic) worker process — ultralytics' DataLoader spawns its own
+    # subprocesses ("daemonic processes are not allowed to have children"
+    # under the default prefork pool), and forking after CUDA init is
+    # fragile anyway.
+    command: celery -A app.worker worker --loglevel=info --pool=solo
+    networks: [ai-platform-net]
+    depends_on:
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  pipeline-service:
+    build: ./services/pipeline
+    env_file: .env
+    networks: [ai-platform-net]
+    depends_on:
+      mssql:
+        condition: service_healthy
+
+  monitor-service:
+    build: ./services/monitor
+    env_file: .env
+    networks: [ai-platform-net]
+    depends_on:
+      mssql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  dashboard-service:
+    build: ./services/dashboard
+    env_file: .env
+    networks: [ai-platform-net]
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    env_file: .env
+    networks: [ai-platform-net]

@@ -1,0 +1,10 @@
+http:
+  middlewares:
+    jwt-auth:
+      forwardAuth:
+        address: "http://auth-service:8000/verify"
+        authResponseHeaders:
+          - X-User-Id
+          - X-User-Roles
+          - X-User-Dept
+          - X-User-Groups
